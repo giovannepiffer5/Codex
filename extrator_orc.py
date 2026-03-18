@@ -41,7 +41,7 @@ COLUNAS_FIXAS = [
 ]
 
 # Nomes das colunas de data (em vez de índices fixos que quebram após reordenação)
-COLUNAS_DATA = ["Created Date", "Modified Date"]
+COLUNAS_DATA = ["Created Date", "Modified Date", "date_aproval", "data_laudo", "data_validate"]
 
 STATUS_PERMITIDOS = ["Validado", "Aprovado", "Aguardando Validação"]
 FUSO_SP = pytz.timezone("America/Sao_Paulo")
@@ -179,12 +179,8 @@ def main():
             _, df[col] = converter_fuso(df[col])
 
     if "date_aproval" in df.columns:
-        df["date_aproval"], _ = converter_fuso(df["date_aproval"])
-        # Filtrar pelo período solicitado, não apenas por ano
-        df = df[
-            (df["date_aproval"] >= pd.Timestamp(ANO_INICIO, MES_INICIO, 1))
-            & (df["date_aproval"] < pd.Timestamp(ANO_FIM, MES_FIM, 1) + pd.offsets.MonthEnd(1) + pd.Timedelta(days=1))
-        ]
+        df["date_aproval"] = pd.to_datetime(df["date_aproval"], errors="coerce", dayfirst=True)
+        df = df[df["date_aproval"].dt.year == 2026]
         df["date_aproval"] = df["date_aproval"].dt.strftime("%d/%m/%Y")
 
     if "regional" in df.columns:
