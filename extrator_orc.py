@@ -21,6 +21,66 @@ PASTA_DOWNLOADS = r"C:\Users\giovanne.silva\Downloads"
 
 ILLEGAL_CHARS = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
 
+TH_HEADER = (
+    'style="background-color:#1F4E79;color:#ffffff;font-weight:bold;'
+    'padding:9px 16px;text-align:center;font-family:Calibri,Arial,sans-serif;'
+    'font-size:11pt;border:1px solid #1F4E79;"'
+)
+TH_SUBHEADER = (
+    'style="background-color:#2E75B6;color:#ffffff;font-weight:bold;'
+    'padding:7px 14px;text-align:center;font-family:Calibri,Arial,sans-serif;'
+    'font-size:10pt;border:1px solid #2E75B6;"'
+)
+TABLE_STYLE = (
+    'style="border-collapse:collapse;font-size:10pt;'
+    'font-family:Calibri,Arial,sans-serif;margin:8px 0 16px 0;"'
+)
+
+
+def formatar_tabela(df):
+    """Converte DataFrame em HTML com inline styles compatíveis com Outlook."""
+    html = df.to_html(border=0)
+
+    thead = re.search(r'<thead>(.*?)</thead>', html, re.DOTALL)
+    tbody = re.search(r'<tbody>(.*?)</tbody>', html, re.DOTALL)
+
+    new_thead = ""
+    if thead:
+        rows = re.findall(r'<tr>(.*?)</tr>', thead.group(1), re.DOTALL)
+        for i, row in enumerate(rows):
+            style = TH_HEADER if i == 0 else TH_SUBHEADER
+            styled = re.sub(r'<th\b([^>]*)>', f'<th {style}>', row)
+            new_thead += f"<tr>{styled}</tr>"
+        html = html.replace(thead.group(0), f"<thead>{new_thead}</thead>")
+
+    if tbody:
+        rows = re.findall(r'<tr>(.*?)</tr>', tbody.group(1), re.DOTALL)
+        new_tbody = ""
+        for i, row in enumerate(rows):
+            is_last = i == len(rows) - 1
+            if is_last:
+                bg, extra = "#d6e4f0", "font-weight:bold;border-top:2px solid #2E75B6;"
+            elif i % 2 == 0:
+                bg, extra = "#ffffff", ""
+            else:
+                bg, extra = "#eef3f9", ""
+
+            td_style = (
+                f'style="background-color:{bg};{extra}'
+                f'padding:6px 14px;text-align:center;border:1px solid #d0d8e4;"'
+            )
+            th_style = (
+                f'style="background-color:{bg};{extra}'
+                f'padding:6px 14px;text-align:left;border:1px solid #d0d8e4;"'
+            )
+            styled = re.sub(r'<td\b([^>]*)>', f'<td {td_style}>', row)
+            styled = re.sub(r'<th\b([^>]*)>', f'<th {th_style}>', styled)
+            new_tbody += f"<tr>{styled}</tr>"
+        html = html.replace(tbody.group(0), f"<tbody>{new_tbody}</tbody>")
+
+    html = re.sub(r'<table[^>]*>', f'<table {TABLE_STYLE}>', html)
+    return html
+
 
 def limpar_valor(val):
     if isinstance(val, str):
@@ -141,25 +201,24 @@ if todos:
     perc_invalidado = (qtd_invalidado / total_registros * 100) if total_registros else 0
 
     # ── 2. Cruzamento: status x auditado ──
-    # index.name=None remove a linha vazia; columns.name vira o rótulo de cabeçalho
     tabela_status = pd.crosstab(
         df["status-txt"], df["auditado_norm"], margins=True, margins_name="Total"
     )
     tabela_status.index.name   = None
     tabela_status.columns.name = "Status"
-    html_tabela_status = tabela_status.to_html(border=0, classes="tabela")
+    html_tabela_status = formatar_tabela(tabela_status)
 
     # ── 3. Auditoria por mês ──
     tabela_mes = pd.crosstab(df["month"], df["auditado_norm"], margins=True, margins_name="Total")
     tabela_mes.index.name   = None
     tabela_mes.columns.name = "Mês"
-    html_tabela_mes = tabela_mes.to_html(border=0, classes="tabela")
+    html_tabela_mes = formatar_tabela(tabela_mes)
 
     # ── 4. Auditoria por regional ──
     tabela_regional = pd.crosstab(df["regional"], df["auditado_norm"], margins=True, margins_name="Total")
     tabela_regional.index.name   = None
     tabela_regional.columns.name = "Regional"
-    html_tabela_regional = tabela_regional.to_html(border=0, classes="tabela")
+    html_tabela_regional = formatar_tabela(tabela_regional)
 
     # ── 5. Valor total por status e auditoria ──
     valor_por_status = (
@@ -174,7 +233,7 @@ if todos:
     valor_por_status = valor_por_status.map(
         lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     )
-    html_tabela_valor = valor_por_status.to_html(border=0, classes="tabela")
+    html_tabela_valor = formatar_tabela(valor_por_status)
 
     # ── 6. Todas as regionais com invalidados ──
     inv_por_regional = (
@@ -187,9 +246,9 @@ if todos:
     for regional, qtd in inv_por_regional.items():
         html_inv_regional += f"<li><b>{regional}</b>: {qtd} chamados invalidados</li>"
 
-    # ── 7. Top 5 fornecedores por volume (usando nome da empresa) ──
-    top_fornecedores = df.groupby("empresa_text").agg(
-        qtd=("empresa_text", "size"),
+    # ── 7. Top 5 fornecedores por volume ──
+    top_fornecedores = df.groupby("empresa").agg(
+        qtd=("empresa", "size"),
         valor=("valor_total_num", "sum")
     ).sort_values("valor", ascending=False).head(5)
     html_top_forn = ""
@@ -197,107 +256,45 @@ if todos:
         valor_fmt = f"R$ {row['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         html_top_forn += f"<li><b>{forn}</b>: {int(row['qtd'])} chamados — {valor_fmt}</li>"
 
-    # ── 8. Taxa de invalidação por status ──
-    taxa_inv = df.groupby("status-txt")["auditado_norm"].apply(
-        lambda x: f"{(x == 'Invalidado').sum() / len(x) * 100:.1f}%"
-    )
-    html_taxa = ""
-    for status_nome, taxa in taxa_inv.items():
-        html_taxa += f"<li><b>{status_nome}</b>: {taxa} de invalidação</li>"
-
     # ── Montar corpo do e-mail ──
     corpo_html = f"""
     <html>
-    <head>
-    <style>
-        body {{ font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #333; }}
-        h2 {{ color: #1F4E79; }}
-        h3 {{ color: #2E75B6; margin-top: 24px; }}
-        .tabela {{
-            border-collapse: collapse;
-            font-size: 10pt;
-            margin: 8px 0 16px 0;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-            border-radius: 6px;
-            overflow: hidden;
-        }}
-        .tabela thead tr:first-child th {{
-            background: linear-gradient(135deg, #1F4E79 0%, #2E75B6 100%);
-            color: #ffffff;
-            font-size: 11pt;
-            font-weight: bold;
-            padding: 9px 16px;
-            text-align: center;
-            letter-spacing: 0.4px;
-            border: none;
-        }}
-        .tabela thead tr:nth-child(2) th {{
-            background-color: #2E75B6;
-            color: #ffffff;
-            padding: 7px 14px;
-            text-align: center;
-            border: none;
-        }}
-        .tabela td {{
-            padding: 6px 14px;
-            border: 1px solid #d0d8e4;
-            text-align: center;
-        }}
-        .tabela tbody tr:nth-child(even) {{ background-color: #eef3f9; }}
-        .tabela tbody tr:hover {{ background-color: #dce8f5; }}
-        .tabela tbody tr:last-child td {{
-            font-weight: bold;
-            background-color: #d6e4f0;
-            border-top: 2px solid #2E75B6;
-        }}
-        .destaque {{ font-size: 13pt; font-weight: bold; color: #1F4E79; }}
-        .bloco {{
-            background-color: #f0f5fb;
-            border-left: 4px solid #2E75B6;
-            padding: 10px 15px;
-            margin: 10px 0;
-            border-radius: 0 4px 4px 0;
-        }}
-        ul {{ line-height: 1.8; }}
-    </style>
-    </head>
-    <body>
-        <h2>Relatório de Auditoria — Custos - PCMBM</h2>
+    <head></head>
+    <body style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#333;">
+
+        <h2 style="color:#1F4E79;">Relatório de Auditoria — Custos - PCMBM</h2>
         <p>Período analisado: <b>{periodo_txt}</b> | Total de chamados analisados: <b>{total_registros}</b></p>
 
-        <h3>1. Resumo Geral de Auditoria</h3>
-        <div class="bloco">
-            <p>Chamados auditados: <span class="destaque">{qtd_auditado}</span> ({perc_auditado:.1f}% do total)</p>
-            <p>Chamados invalidados: <span class="destaque">{qtd_invalidado}</span> ({perc_invalidado:.1f}% do total)</p>
+        <h3 style="color:#2E75B6;margin-top:24px;">1. Resumo Geral de Auditoria</h3>
+        <div style="background-color:#f0f5fb;border-left:4px solid #2E75B6;padding:10px 15px;margin:10px 0;">
+            <p>Chamados auditados: <span style="font-size:13pt;font-weight:bold;color:#1F4E79;">{qtd_auditado}</span> ({perc_auditado:.1f}% do total)</p>
+            <p>Chamados invalidados: <span style="font-size:13pt;font-weight:bold;color:#1F4E79;">{qtd_invalidado}</span> ({perc_invalidado:.1f}% do total)</p>
         </div>
 
-        <h3>2. Distribuição por Status do Chamado</h3>
-        <p>A tabela abaixo apresenta o cruzamento entre o <b>status atual do chamado</b> e a <b>situação de auditoria</b> (Auditado ou Invalidado):</p>
+        <h3 style="color:#2E75B6;margin-top:24px;">2. Distribuição por Status do Chamado</h3>
+        <p>Cruzamento entre o <b>status atual do chamado</b> e a <b>situação de auditoria</b> (Auditado ou Invalidado):</p>
         {html_tabela_status}
 
-        <h3>3. Taxa de Invalidação por Status</h3>
-        <p>Percentual de chamados invalidados dentro de cada status:</p>
-        <ul>{html_taxa}</ul>
-
-        <h3>4. Evolução Mensal</h3>
-        <p>A tabela abaixo mostra a <b>quantidade de chamados auditados e invalidados por mês</b>, permitindo acompanhar a evolução ao longo do período:</p>
+        <h3 style="color:#2E75B6;margin-top:24px;">3. Evolução Mensal</h3>
+        <p>Quantidade de chamados <b>auditados e invalidados por mês</b>:</p>
         {html_tabela_mes}
 
-        <h3>5. Distribuição por Regional</h3>
-        <p>Detalhamento de chamados <b>auditados e invalidados por regional</b>:</p>
+        <h3 style="color:#2E75B6;margin-top:24px;">4. Distribuição por Regional</h3>
+        <p>Chamados <b>auditados e invalidados por regional</b>:</p>
         {html_tabela_regional}
 
-        <h3>6. Invalidações por Regional</h3>
-        <p>Volume de chamados invalidados em cada regional, ordenado do maior para o menor:</p>
-        <ul>{html_inv_regional}</ul>
+        <h3 style="color:#2E75B6;margin-top:24px;">5. Invalidações por Regional</h3>
+        <p>Volume de chamados invalidados por regional, do maior para o menor:</p>
+        <ul style="line-height:1.8;">{html_inv_regional}</ul>
 
-        <h3>7. Valor Total por Status e Situação de Auditoria</h3>
-        <p>A tabela abaixo apresenta o <b>valor financeiro (R$)</b> dos chamados, separado por status e situação de auditoria:</p>
+        <h3 style="color:#2E75B6;margin-top:24px;">6. Valor Total por Status e Situação de Auditoria</h3>
+        <p><b>Valor financeiro (R$)</b> separado por status e situação de auditoria:</p>
         {html_tabela_valor}
 
-        <h3>8. Top 5 Fornecedores por Valor</h3>
+        <h3 style="color:#2E75B6;margin-top:24px;">7. Top 5 Fornecedores por Valor</h3>
         <p>Fornecedores com maior volume financeiro no período:</p>
-        <ul>{html_top_forn}</ul>
+        <ul style="line-height:1.8;">{html_top_forn}</ul>
+
     </body>
     </html>
     """
